@@ -19,7 +19,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window = UIWindow(frame: windowsScene.coordinateSpace.bounds)
         window?.windowScene = windowsScene
         
-        window?.rootViewController = ViewController()
+        window?.rootViewController = MainMapVC()
         window?.makeKeyAndVisible()
     }
 
