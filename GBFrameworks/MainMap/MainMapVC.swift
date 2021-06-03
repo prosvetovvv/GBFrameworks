@@ -7,12 +7,16 @@
 
 import UIKit
 import MapKit
+import RealmSwift
 
 class MainMapVC: UIViewController {
     let rootView = MainMapView()
-    let mapView = MKMapView()
     let locationManager = CLLocationManager()
     let locationDistance: Double = 500
+    var coordinates = [CLLocationCoordinate2D]()
+    var isRecording = false
+    
+    let realm = try! Realm()
     
     // MARK: - Lifecycle
     
@@ -25,23 +29,21 @@ class MainMapVC: UIViewController {
         super.viewDidLoad()
         setupMapView()
         setupLocationManager()
-        
-        locationManager.startUpdatingLocation()
+        setupButtons()
     }
     
     // MARK: - Private
     
     private func setupMapView() {
-        
         rootView.mapView.delegate = self
         rootView.mapView.showsUserLocation = true
     }
     
     private func setupLocationManager() {
-        
         if CLLocationManager.locationServicesEnabled() {
             locationManager.delegate = self
-            locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager.allowsBackgroundLocationUpdates = true
+            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
             handleAuthorizationStatus(locationManager: locationManager, status: locationManager.authorizationStatus)
         } else {
             //show alert
@@ -53,17 +55,39 @@ class MainMapVC: UIViewController {
         rootView.mapView.setRegion(region, animated: true)
     }
     
-    private func pinAnnotationAtCurrentLocation(_ coordinate: CLLocationCoordinate2D) {
-        let currentLocation = MKPointAnnotation()
-        currentLocation.coordinate = coordinate
-        rootView.mapView.addAnnotation(currentLocation)
+    private func updateRoute() {
+        removeRoute()
+        addPolyLine()
+    }
+    
+    private func addPolyLine() {
+        let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
+        rootView.mapView.addOverlay(polyline)
+    }
+    
+    private func removeRoute() {
+        let oldPolyLineOverlay = rootView.mapView.overlays.filter { $0 is MKPolyline }
+        rootView.mapView.removeOverlays(oldPolyLineOverlay)
+    }
+    
+    private func saveRoutePoints() {
+        coordinates.forEach {
+            let location = Location(latitude: $0.latitude, longitude: $0.longitude)
+            
+            DBService.shared.save(location: location)
+        }
+    }
+    
+    private func removeRoutePoints() {
+        DBService.shared.removeAllLocation()
     }
     
     private func handleAuthorizationStatus(locationManager: CLLocationManager, status: CLAuthorizationStatus) {
         switch status {
         
         case .notDetermined:
-            locationManager.requestWhenInUseAuthorization()
+            locationManager.requestAlwaysAuthorization()
+        //locationManager.requestWhenInUseAuthorization()
         case .denied:
             // show alert
             break
@@ -75,6 +99,57 @@ class MainMapVC: UIViewController {
             break
         }
     }
+    
+    // MARK: - UI
+    
+    private func setupButtons() {
+        rootView.routeButton.addTarget(self, action: #selector(tappedRoute), for: .touchUpInside)
+        rootView.recordButton.addTarget(self, action: #selector(tappedRecord), for: .touchUpInside)
+        rootView.stopButton.addTarget(self, action: #selector(tappedStop), for: .touchUpInside)
+    }
+    
+    // MARK: - Objc
+    
+    @objc
+    private func tappedRoute() {
+        guard !isRecording else { return }
+
+        let routePoints = DBService.shared.getLocation()
+        
+        coordinates = routePoints.map { $0.clLocationCoordinate2D }
+        
+        updateRoute()
+        
+        rootView.mapView.setVisibleMapRect(rootView.mapView.overlays.first!.boundingMapRect, edgePadding: UIEdgeInsets.init(top: 80, left: 20, bottom: 100, right: 20), animated: true)
+    }
+    
+    @objc
+    private func tappedRecord() {
+        guard !isRecording else { return }
+        
+        isRecording = true
+        coordinates = []
+        
+        removeRoute()
+    
+        locationManager.startUpdatingLocation()
+        //locationManager.startMonitoringSignificantLocationChanges()
+    }
+    
+    @objc
+    private func tappedStop() {
+        guard isRecording else { return }
+        
+        isRecording = false
+        
+        locationManager.stopUpdatingLocation()
+        
+        removeRoutePoints()
+        
+        saveRoutePoints()
+        
+        removeRoute()
+    }
 }
 
 // MARK: - Extension
@@ -83,10 +158,22 @@ extension MainMapVC: MKMapViewDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         
-        let coordinate = location.coordinate
-        pinAnnotationAtCurrentLocation(coordinate)
-        let center = location.coordinate
-        centerViewToUserLocation(center: center)
+        let currentCoordinate = location.coordinate
+        coordinates.append(currentCoordinate)
+                
+        centerViewToUserLocation(center: currentCoordinate)
+        
+        updateRoute()
+    }
+    
+    func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+        if let routePolyline = overlay as? MKPolyline {
+            let renderer = MKPolylineRenderer(polyline: routePolyline)
+            renderer.strokeColor = .systemBlue
+            renderer.lineWidth = 7
+            return renderer
+        }
+        return MKOverlayRenderer()
     }
 }
 
